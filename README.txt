@@ -1,4 +1,10 @@
 Snakes & Ladders (OS Assignment)
+Hadi Abdulla
+(242UC243PP)
+Mohammed Aman
+(1231300581)
+Amr Loay Mohamed Kamal
+Ahmed(242UC243PS)
 
 How to Compile (Linux)
 1) make
