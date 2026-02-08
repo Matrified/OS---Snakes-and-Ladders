@@ -677,6 +677,7 @@ int main(void) {
         printf("Players must be between %d and %d.\n", MIN_PLAYERS, MAX_PLAYERS);
         return 1;
     }
+    printf("Waiting for %d players to connect...\n", target_players);
 
     /* Shared memory setup (POSIX shm). */
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
@@ -754,6 +755,7 @@ int main(void) {
 
     printf("Snakes & Ladders Server running on port %d\n", PORT);
     enqueue_log("Server started on port %d", PORT);
+    enqueue_log("Target players: %d", target_players);
 
     /* Accept exactly N players, then start the game. */
     for (int i = 0; i < target_players; i++) {
@@ -767,7 +769,10 @@ int main(void) {
         pthread_mutex_lock(&game->state_mutex);
         game->connected[i] = 1;
         game->active_players++;
+        int active_now = game->active_players;
         pthread_mutex_unlock(&game->state_mutex);
+        printf("Player %d connected (%d/%d)\n", i + 1, active_now, target_players);
+        enqueue_log("Player %d connected (%d/%d)", i + 1, active_now, target_players);
 
         /* One child process per client (required by assignment). */
         pid_t pid = fork();
