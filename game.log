@@ -1,0 +1,103 @@
+Server started on port 5555
+Player 1 (alpha) connected
+Player 2 (bravo) connected
+Player 3 (charlie) connected
+New game started (round 1)
+Turn -> Player 1 (alpha)
+Player 4 (delta) connected
+Player alpha rolled 6 -> position 25
+Player alpha climbed a ladder (6 -> 25)
+Turn -> Player 2 (bravo)
+Player bravo rolled 4 -> position 4
+Turn -> Player 3 (charlie)
+Player charlie rolled 6 -> position 25
+Player charlie climbed a ladder (6 -> 25)
+Turn -> Player 4 (delta)
+Player delta rolled 4 -> position 4
+Turn -> Player 1 (alpha)
+Player alpha rolled 6 -> position 31
+Turn -> Player 2 (bravo)
+Player bravo rolled 1 -> position 5
+Turn -> Player 3 (charlie)
+Player charlie rolled 6 -> position 31
+Turn -> Player 4 (delta)
+Player delta rolled 3 -> position 7
+Turn -> Player 1 (alpha)
+Player alpha rolled 2 -> position 33
+Turn -> Player 2 (bravo)
+Player bravo rolled 5 -> position 10
+Turn -> Player 3 (charlie)
+Player charlie rolled 4 -> position 35
+Turn -> Player 4 (delta)
+Player delta rolled 3 -> position 10
+Turn -> Player 1 (alpha)
+Player alpha rolled 5 -> position 38
+Turn -> Player 2 (bravo)
+Player bravo rolled 2 -> position 12
+Turn -> Player 3 (charlie)
+Player charlie rolled 6 -> position 41
+Turn -> Player 4 (delta)
+Player delta rolled 1 -> position 40
+Player delta climbed a ladder (11 -> 40)
+Turn -> Player 1 (alpha)
+Player alpha rolled 4 -> position 42
+Turn -> Player 2 (bravo)
+Player bravo rolled 1 -> position 13
+Turn -> Player 3 (charlie)
+Player charlie rolled 3 -> position 44
+Turn -> Player 4 (delta)
+Player delta rolled 2 -> position 42
+Turn -> Player 1 (alpha)
+Player alpha rolled 6 -> position 48
+Turn -> Player 2 (bravo)
+Player bravo rolled 1 -> position 14
+Turn -> Player 3 (charlie)
+Player charlie rolled 2 -> position 90
+Player charlie climbed a ladder (46 -> 90)
+Turn -> Player 4 (delta)
+Player delta rolled 5 -> position 47
+Turn -> Player 1 (alpha)
+Player alpha rolled 1 -> position 49
+Turn -> Player 2 (bravo)
+Player bravo rolled 5 -> position 19
+Turn -> Player 3 (charlie)
+Player charlie rolled 6 -> position 96
+Turn -> Player 4 (delta)
+Player delta rolled 1 -> position 48
+Turn -> Player 1 (alpha)
+Player alpha rolled 4 -> position 53
+Turn -> Player 2 (bravo)
+Player bravo rolled 2 -> position 21
+Turn -> Player 3 (charlie)
+Player charlie rolled 5 -> position 96
+Player charlie needed exact roll (stayed at 96)
+Turn -> Player 4 (delta)
+Player delta rolled 3 -> position 51
+Turn -> Player 1 (alpha)
+Player alpha rolled 2 -> position 55
+Turn -> Player 2 (bravo)
+Player bravo rolled 3 -> position 24
+Turn -> Player 3 (charlie)
+Player charlie rolled 4 -> position 100
+Player charlie WON the game
+New game started (round 2)
+Turn -> Player 1 (alpha)
+Player alpha rolled 3 -> position 3
+Turn -> Player 2 (bravo)
+Player bravo rolled 2 -> position 2
+Turn -> Player 3 (charlie)
+Player charlie rolled 6 -> position 25
+Player charlie climbed a ladder (6 -> 25)
+Turn -> Player 4 (delta)
+Player delta rolled 4 -> position 4
+Turn -> Player 1 (alpha)
+Player alpha rolled 3 -> position 25
+Player alpha climbed a ladder (6 -> 25)
+Turn -> Player 2 (bravo)
+Player bravo rolled 2 -> position 4
+Turn -> Player 3 (charlie)
+Player 3 (charlie) disconnected
+Turn -> Player 4 (delta)
+Player delta rolled 2 -> position 25
+Player delta climbed a ladder (6 -> 25)
+Turn -> Player 1 (alpha)
