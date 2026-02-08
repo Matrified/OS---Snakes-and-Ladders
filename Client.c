@@ -1,3 +1,12 @@
+/*
+INDIVIDUAL CONTRIBUTIONS
+
+Hadi:
+- Client-side TCP connection logic
+- Message receiving and display logic
+- Client testing and validation
+*/
+
 #include <stdio.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -6,13 +15,14 @@
 
 #define PORT 5555
 
+/* Read a line from the socket (newline-terminated). */
 static int recv_line(int sock, char *buf, size_t max_len) {
     size_t idx = 0;
     while (idx < max_len - 1) {
         char c;
-        int n = recv(sock, &c, 1, 0);
+        ssize_t n = recv(sock, &c, 1, 0);
         if (n <= 0) {
-            return n;
+            return -1;
         }
         if (c == '\n') {
             break;
@@ -26,12 +36,14 @@ static int recv_line(int sock, char *buf, size_t max_len) {
 }
 
 int main(void) {
+    /* Create TCP socket. */
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("socket");
         return 1;
     }
 
+    /* Connect to local server. */
     struct sockaddr_in server;
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
@@ -43,12 +55,18 @@ int main(void) {
         return 1;
     }
 
+    /* Receive prompt (name request). */
     char buffer[256];
     int n = recv_line(sock, buffer, sizeof(buffer));
-    if (n > 0) {
-        printf("%s\n", buffer);
+    if (n >= 0) {
+        if (n > 0) {
+            printf("%s\n", buffer);
+        } else {
+            printf("\n");
+        }
     }
 
+    /* Send player name. */
     char name[64];
     if (fgets(name, sizeof(name), stdin) == NULL) {
         close(sock);
@@ -56,13 +74,19 @@ int main(void) {
     }
     send(sock, name, strlen(name), 0);
 
+    /* Main receive loop. */
     while (1) {
         n = recv_line(sock, buffer, sizeof(buffer));
-        if (n <= 0) {
+        if (n < 0) {
             break;
         }
-        printf("%s\n", buffer);
+        if (n > 0) {
+            printf("%s\n", buffer);
+        } else {
+            printf("\n");
+        }
 
+        /* Only respond on your turn. */
         if (strncmp(buffer, "YOUR_TURN", 9) == 0) {
             printf("Press ENTER to roll...\n");
             fgets(buffer, sizeof(buffer), stdin);
@@ -70,6 +94,7 @@ int main(void) {
         }
     }
 
+    /* Cleanup. */
     close(sock);
     return 0;
 }
