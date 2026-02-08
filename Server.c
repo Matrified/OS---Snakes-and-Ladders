@@ -792,6 +792,23 @@ int main(void) {
         close(client_fd);
     }
 
+    /* Wait until all players have entered their names. */
+    int name_ready = 0;
+    while (!name_ready) {
+        pthread_mutex_lock(&game->state_mutex);
+        name_ready = 1;
+        for (int i = 0; i < target_players; i++) {
+            if (!game->connected[i] || game->player_name[i][0] == '\0') {
+                name_ready = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&game->state_mutex);
+        if (!name_ready) {
+            usleep(200000); /* 0.2s */
+        }
+    }
+
     pthread_mutex_lock(&game->state_mutex);
     /* Start first round. */
     reset_game_locked();
