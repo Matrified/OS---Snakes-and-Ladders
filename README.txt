@@ -29,7 +29,8 @@ Concurrency Model (Hybrid)
 - Shared game state is in POSIX shared memory and protected by process-shared mutexes and semaphores.
 
 Files
-- program/Server.c / program/Client.c
-- program/Makefile
+- Server.c  
+- Client.c
+- Makefile
 - scores.txt (persistent win counts)
 - game.log (event log)
