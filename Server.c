@@ -217,6 +217,9 @@ static int apply_snakes_ladders(int pos) {
     return pos;
 }
 
+/* Best-effort send (small messages). */
+static void send_line(int sock, const char *msg);
+
 /* Reset game state for a new round (caller must hold state_mutex). */
 static void reset_game_locked(void) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
