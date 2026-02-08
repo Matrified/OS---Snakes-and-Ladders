@@ -517,12 +517,8 @@ static void handle_client(int sock, int id) {
             continue;
         }
 
-        int my_turn = (game->current_turn == id);
+        /* If you were woken by the scheduler, it's your turn. */
         pthread_mutex_unlock(&game->state_mutex);
-
-        if (!my_turn) {
-            continue;
-        }
 
         if (!game_started_notice) {
             send_line(sock, "Game started! Your turn will be announced.\n");
@@ -546,7 +542,8 @@ static void handle_client(int sock, int id) {
             game->connected[id] = 0;
             game->active_players--;
             pthread_mutex_unlock(&game->state_mutex);
-            enqueue_log("Player %d (%s) disconnected", id + 1, game->player_name[id]);
+            enqueue_log("Player %d (%s) disconnected (recv=%d errno=%d)",
+                        id + 1, game->player_name[id], n, errno);
             sem_post(&game->turn_done);
             break;
         }
