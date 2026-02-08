@@ -90,6 +90,7 @@ typedef struct {
     sem_t log_spaces;
     sem_t turn_sem[MAX_PLAYERS];
     sem_t turn_done;
+    sem_t turn_ack[MAX_PLAYERS];
 } SharedGame;
 
 static SharedGame *game = NULL;
@@ -360,6 +361,7 @@ static void *scheduler_thread(void *arg) {
         pthread_mutex_unlock(&game->state_mutex);
 
         sem_post(&game->turn_sem[next]);
+        sem_wait(&game->turn_ack[next]);
 
         sem_wait(&game->turn_done);
         last_turn = next;
@@ -467,6 +469,7 @@ static void handle_client(int sock, int id) {
         if (sem_wait(&game->turn_sem[id]) != 0) {
             continue;
         }
+        sem_post(&game->turn_ack[id]);
 
         pthread_mutex_lock(&game->state_mutex);
         if (!game->connected[id]) {
@@ -714,6 +717,7 @@ int main(void) {
     sem_init(&game->log_spaces, 1, LOG_QUEUE_SIZE);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         sem_init(&game->turn_sem[i], 1, 0);
+        sem_init(&game->turn_ack[i], 1, 0);
     }
     sem_init(&game->turn_done, 1, 0);
 
