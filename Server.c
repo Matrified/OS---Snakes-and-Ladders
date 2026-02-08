@@ -1,3 +1,29 @@
+/*
+– INDIVIDUAL CONTRIBUTIONS
+
+Hadi:
+- Overall system architecture and design
+- TCP server setup and client connection handling
+- POSIX shared memory design and layout
+- Process-shared mutex initialization and synchronization
+- Hybrid concurrency model using fork() and pthreads
+- Round Robin turn scheduling logic
+- Multi-game reset and coordination logic
+- Final integration and debugging
+
+Aman:
+- Snakes and ladders rule implementation
+- Dice rolling and movement constraints
+- Win condition logic
+- Client handler flow testing
+
+Amr:
+- Logger design and implementation (game.log)
+- Persistent score storage (scores.txt)
+- File I/O synchronization
+- System testing and validation
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
