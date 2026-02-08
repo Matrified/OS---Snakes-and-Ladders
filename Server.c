@@ -401,7 +401,8 @@ static int recv_line(int sock, char *buf, size_t max_len) {
 
 /* Best-effort send (small messages). */
 static void send_line(int sock, const char *msg) {
-    send(sock, msg, strlen(msg), 0);
+    ssize_t n = send(sock, msg, strlen(msg), 0);
+    (void)n; /* ignore send errors; disconnect is handled on recv */
 }
 
 /* Print scoreboard to a client. */
@@ -663,6 +664,7 @@ static void handle_sigint(int sig) {
 int main(void) {
     signal(SIGCHLD, reap);
     signal(SIGINT, handle_sigint);
+    signal(SIGPIPE, SIG_IGN);
 
     int target_players = 0;
     printf("Enter number of players (%d-%d): ", MIN_PLAYERS, MAX_PLAYERS);
