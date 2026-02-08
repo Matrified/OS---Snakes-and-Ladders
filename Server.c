@@ -42,9 +42,7 @@ typedef struct {
     int round_no;
     int game_over_notice;
     int turn_count;
-    int board_version;
-    int board_seen_count;
-    int board_target_count;
+    int board_show_every;
     int target_players;
     int active_players;
     char player_name[MAX_PLAYERS][MAX_NAME];
@@ -55,7 +53,6 @@ typedef struct {
     char log_queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
     int log_head;
     int log_tail;
-    char board_snapshot[2048]; /* shared snapshot for broadcast */
 
     pthread_mutex_t state_mutex;
     pthread_mutex_t log_mutex;
@@ -193,9 +190,7 @@ static void reset_game_locked(void) {
     game->winner_id = -1;
     game->game_over_notice = 0;
     game->turn_count = 0;
-    game->board_version = 0;
-    game->board_seen_count = 0;
-    game->board_target_count = 0;
+    game->board_show_every = 3;
     game->game_started = 1;
     game->round_no++;
 }
@@ -418,7 +413,7 @@ static void handle_client(int sock, int id) {
 
     int game_started_notice = 0;
     int game_over_notice = 0;
-    int last_board_version = 0;
+    int my_turns = 0;
     while (server_running) {
         send_line(sock, "Waiting for your turn...\n");
         if (sem_wait(&game->turn_sem[id]) != 0) {
@@ -432,19 +427,6 @@ static void handle_client(int sock, int id) {
         }
         if (!game->game_over) {
             game_over_notice = 0;
-        }
-
-        int send_board_now = 0;
-        if (game->board_version > 0 && game->board_version != last_board_version) {
-            strncpy(board_local, game->board_snapshot, sizeof(board_local) - 1);
-            board_local[sizeof(board_local) - 1] = '\0';
-            last_board_version = game->board_version;
-            game->board_seen_count++;
-            if (game->board_seen_count >= game->board_target_count && game->board_target_count > 0) {
-                game->board_seen_count = 0;
-                game->board_target_count = 0;
-            }
-            send_board_now = 1;
         }
 
         if (game->game_over) {
@@ -466,13 +448,6 @@ static void handle_client(int sock, int id) {
             }
             pthread_mutex_unlock(&game->state_mutex);
 
-            if (send_board_now) {
-                send_line(sock, "\n----- Board Snapshot -----\n");
-                send_line(sock, board_local);
-                send_line(sock, "--------------------------\n");
-                enqueue_log("Board snapshot sent");
-            }
-
             if (!game_over_notice) {
                 send_line(sock, "\n==============================\n");
                 if (winner_name[0]) {
@@ -491,24 +466,11 @@ static void handle_client(int sock, int id) {
 
         if (!game->game_started) {
             pthread_mutex_unlock(&game->state_mutex);
-            if (send_board_now) {
-                send_line(sock, "\n----- Board Snapshot -----\n");
-                send_line(sock, board_local);
-                send_line(sock, "--------------------------\n");
-                enqueue_log("Board snapshot sent");
-            }
             continue;
         }
 
         int my_turn = (game->current_turn == id);
         pthread_mutex_unlock(&game->state_mutex);
-
-        if (send_board_now) {
-            send_line(sock, "\n----- Board Snapshot -----\n");
-            send_line(sock, board_local);
-            send_line(sock, "--------------------------\n");
-            enqueue_log("Board snapshot sent");
-        }
 
         if (!my_turn) {
             continue;
@@ -540,8 +502,7 @@ static void handle_client(int sock, int id) {
         int hit_ladder = 0;
         int jump_from = 0;
         int jump_to = 0;
-        int notify_ids[MAX_PLAYERS];
-        int notify_count = 0; /* who to wake for board snapshot */
+        /* no broadcast for board; only per-player display */
 
         if (before + dice <= BOARD_SIZE) {
             moved = 1;
@@ -561,24 +522,6 @@ static void handle_client(int sock, int id) {
         }
 
         game->turn_count++;
-        /* every player gets ~3 turns -> show board */
-        int interval = game->active_players * 3;
-        if (interval <= 0) {
-            interval = 3;
-        }
-        if (game->turn_count % interval == 0) {
-            build_board_locked(game->board_snapshot, sizeof(game->board_snapshot));
-            strncpy(board_local, game->board_snapshot, sizeof(board_local) - 1);
-            board_local[sizeof(board_local) - 1] = '\0';
-            game->board_version++;
-            game->board_seen_count = 0;
-            game->board_target_count = game->active_players;
-            for (int i = 0; i < MAX_PLAYERS; i++) {
-                if (game->connected[i] && i != id) {
-                    notify_ids[notify_count++] = i;
-                }
-            }
-        }
 
         snprintf(buffer, sizeof(buffer), "Player %s rolled %d -> position %d\n",
                  game->player_name[id], dice, game->position[id]);
@@ -610,18 +553,6 @@ static void handle_client(int sock, int id) {
             send_line(sock, buffer);
         }
 
-        /* manual broadcast: wake everyone so they print the snapshot */
-        if (notify_count > 0) {
-            send_line(sock, "\n----- Board Snapshot -----\n");
-            send_line(sock, board_local);
-            send_line(sock, "--------------------------\n");
-            enqueue_log("Board snapshot sent");
-        }
-
-        for (int i = 0; i < notify_count; i++) {
-            sem_post(&game->turn_sem[notify_ids[i]]);
-        }
-
         pthread_mutex_lock(&game->state_mutex);
         if (game->position[id] == BOARD_SIZE && !game->game_over) {
             game->game_over = 1;
@@ -637,6 +568,7 @@ static void handle_client(int sock, int id) {
             send_line(sock, buffer);
         }
 
+        my_turns++;
         sem_post(&game->turn_done);
     }
 
@@ -805,3 +737,11 @@ int main(void) {
 
     return 0;
 }
+        if (my_turns == 0 || ((my_turns + 1) % game->board_show_every == 0)) {
+            pthread_mutex_lock(&game->state_mutex);
+            build_board_locked(board_local, sizeof(board_local));
+            pthread_mutex_unlock(&game->state_mutex);
+            send_line(sock, "\n----- Board -----\n");
+            send_line(sock, board_local);
+            send_line(sock, "-----------------\n");
+        }
