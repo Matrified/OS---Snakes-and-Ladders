@@ -1,3 +1,29 @@
+/*
+– INDIVIDUAL CONTRIBUTIONS
+
+Hadi:
+- Overall system architecture and design
+- TCP server setup and client connection handling
+- POSIX shared memory design and layout
+- Process-shared mutex initialization and synchronization
+- Hybrid concurrency model using fork() and pthreads
+- Round Robin turn scheduling logic
+- Multi-game reset and coordination logic
+- Final integration and debugging
+
+Aman:
+- Snakes and ladders rule implementation
+- Dice rolling and movement constraints
+- Win condition logic
+- Client handler flow testing
+
+Amr:
+- Logger design and implementation (game.log)
+- Persistent score storage (scores.txt)
+- File I/O synchronization
+- System testing and validation
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,11 +53,13 @@
 #define LOG_MSG_LEN 128
 #define SCORE_MAX 50
 
+/* Persistent score entry (saved to scores.txt). */
 typedef struct {
     char name[MAX_NAME];
     int wins;
 } ScoreEntry;
 
+/* Shared state between parent threads and forked children. */
 typedef struct {
     int position[MAX_PLAYERS];
     int connected[MAX_PLAYERS];
@@ -42,27 +70,24 @@ typedef struct {
     int round_no;
     int game_over_notice;
     int turn_count;
-    int board_version;
-    int board_seen_count;
-    int board_target_count;
     int target_players;
     int active_players;
     char player_name[MAX_PLAYERS][MAX_NAME];
+    int ready[MAX_PLAYERS];
 
     ScoreEntry scores[SCORE_MAX];
     int score_count;
 
+    /* Log queue (non-blocking for game flow). */
     char log_queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
     int log_head;
     int log_tail;
-    char board_snapshot[2048]; /* shared snapshot for broadcast */
 
+    /* Sync primitives (process-shared). */
     pthread_mutex_t state_mutex;
     pthread_mutex_t log_mutex;
     sem_t log_items;
     sem_t log_spaces;
-    sem_t turn_sem[MAX_PLAYERS];
-    sem_t turn_done;
 } SharedGame;
 
 static SharedGame *game = NULL;
@@ -77,6 +102,7 @@ static int ladders[4][2] = {
     {6, 25}, {11, 40}, {46, 90}, {60, 85}
 };
 
+/* Push a message into the shared log queue (drop if full). */
 static void enqueue_log(const char *fmt, ...) {
     char msg[LOG_MSG_LEN];
     va_list args;
@@ -89,6 +115,7 @@ static void enqueue_log(const char *fmt, ...) {
         msg[len - 1] = '\0';
     }
 
+    /* Don't block gameplay on logging. */
     if (sem_trywait(&game->log_spaces) != 0) {
         return;
     }
@@ -101,6 +128,7 @@ static void enqueue_log(const char *fmt, ...) {
     sem_post(&game->log_items);
 }
 
+/* Dedicated logger thread (parent process). */
 static void *logger_thread(void *arg) {
     (void)arg;
     while (server_running) {
@@ -124,6 +152,7 @@ static void *logger_thread(void *arg) {
     return NULL;
 }
 
+/* Load scores.txt into shared memory at startup. */
 static void load_scores_file(void) {
     FILE *fp = fopen(SCORE_FILE, "r");
     if (!fp) {
@@ -144,6 +173,7 @@ static void load_scores_file(void) {
     fclose(fp);
 }
 
+/* Persist scores from memory to disk. */
 static void save_scores_file(void) {
     FILE *fp = fopen(SCORE_FILE, "w");
     if (!fp) {
@@ -155,6 +185,7 @@ static void save_scores_file(void) {
     fclose(fp);
 }
 
+/* Update winner score (caller must hold state_mutex). */
 static void update_score_locked(const char *name) {
     for (int i = 0; i < game->score_count; i++) {
         if (strncmp(game->scores[i].name, name, MAX_NAME) == 0) {
@@ -170,6 +201,7 @@ static void update_score_locked(const char *name) {
     }
 }
 
+/* Apply snake or ladder rule if the player lands exactly on a start cell. */
 static int apply_snakes_ladders(int pos) {
     for (int i = 0; i < 4; i++) {
         if (snakes[i][0] == pos) {
@@ -184,6 +216,10 @@ static int apply_snakes_ladders(int pos) {
     return pos;
 }
 
+/* Best-effort send (small messages). */
+static void send_line(int sock, const char *msg);
+
+/* Reset game state for a new round (caller must hold state_mutex). */
 static void reset_game_locked(void) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         game->position[i] = 0;
@@ -193,13 +229,11 @@ static void reset_game_locked(void) {
     game->winner_id = -1;
     game->game_over_notice = 0;
     game->turn_count = 0;
-    game->board_version = 0;
-    game->board_seen_count = 0;
-    game->board_target_count = 0;
     game->game_started = 1;
     game->round_no++;
 }
 
+/* Build a compact "Positions" line (caller must hold state_mutex). */
 static void build_positions_locked(char *out, size_t len) {
     size_t used = 0;
     out[0] = '\0';
@@ -223,8 +257,8 @@ static void build_positions_locked(char *out, size_t len) {
     }
 }
 
-/* Build a simple 10x10 board (serpentine numbering) */
-static void build_board_locked(char *out, size_t len) {
+/* Simple serpentine board (numbers only). */
+static void build_board_numbers(char *out, size_t len) {
     size_t used = 0;
     out[0] = '\0';
 
@@ -235,26 +269,7 @@ static void build_board_locked(char *out, size_t len) {
 
         for (int col = 0; col < 10; col++) {
             int num = (row % 2 == 0) ? (start + col) : (start + (9 - col));
-            int players_here = 0;
-            int last_id = -1;
-
-            for (int i = 0; i < MAX_PLAYERS; i++) {
-                if (game->connected[i] && game->position[i] == num) {
-                    players_here++;
-                    last_id = i;
-                }
-            }
-
-            char cell[8];
-            if (players_here == 0) {
-                snprintf(cell, sizeof(cell), "%d", num);
-            } else if (players_here == 1) {
-                snprintf(cell, sizeof(cell), "P%d", last_id + 1);
-            } else {
-                snprintf(cell, sizeof(cell), "M%d", players_here);
-            }
-
-            off += snprintf(line + off, sizeof(line) - off, "[%4s]", cell);
+            off += snprintf(line + off, sizeof(line) - off, "[%3d]", num);
         }
 
         off += snprintf(line + off, sizeof(line) - off, "\n");
@@ -267,81 +282,25 @@ static void build_board_locked(char *out, size_t len) {
     }
 }
 
-static int find_next_active_locked(int after) {
-    for (int i = 1; i <= MAX_PLAYERS; i++) {
-        int idx = (after + i) % MAX_PLAYERS;
-        if (game->connected[idx]) {
-            return idx;
-        }
+/* Show snakes and ladders list below the board. */
+static void send_snakes_ladders(int sock) {
+    char line[128];
+    send_line(sock, "Snakes: ");
+    for (int i = 0; i < 4; i++) {
+        snprintf(line, sizeof(line), "%d->%d ", snakes[i][0], snakes[i][1]);
+        send_line(sock, line);
     }
-    return -1;
+    send_line(sock, "\nLadders: ");
+    for (int i = 0; i < 4; i++) {
+        snprintf(line, sizeof(line), "%d->%d ", ladders[i][0], ladders[i][1]);
+        send_line(sock, line);
+    }
+    send_line(sock, "\n");
 }
 
-static void *scheduler_thread(void *arg) {
-    (void)arg;
-    int last_turn = -1;
-    int last_round = 0;
+/* Scheduler thread removed: turns are handled in each client process. */
 
-    while (server_running) {
-        pthread_mutex_lock(&game->state_mutex);
-
-        if (game->game_over) {
-            if (game->game_over_notice != game->round_no) {
-                game->game_over_notice = game->round_no;
-                for (int i = 0; i < MAX_PLAYERS; i++) {
-                    if (game->connected[i]) {
-                        sem_post(&game->turn_sem[i]);
-                    }
-                }
-            }
-            pthread_mutex_unlock(&game->state_mutex);
-            sleep(1);
-            continue;
-        }
-
-        if (!game->game_started || game->active_players < MIN_PLAYERS) {
-            pthread_mutex_unlock(&game->state_mutex);
-            sleep(1);
-            continue;
-        }
-
-        if (game->round_no != last_round) {
-            last_round = game->round_no;
-            last_turn = -1;
-        }
-
-        int next = find_next_active_locked(last_turn);
-        if (next < 0) {
-            pthread_mutex_unlock(&game->state_mutex);
-            sleep(1);
-            continue;
-        }
-
-        game->current_turn = next;
-        enqueue_log("Turn -> Player %d (%s)", next + 1,
-                    game->player_name[next][0] ? game->player_name[next] : "Player");
-        pthread_mutex_unlock(&game->state_mutex);
-
-        sem_post(&game->turn_sem[next]);
-
-        sem_wait(&game->turn_done);
-        last_turn = next;
-
-        pthread_mutex_lock(&game->state_mutex);
-        if (game->game_over && game->active_players >= MIN_PLAYERS) {
-            pthread_mutex_unlock(&game->state_mutex);
-            sleep(2);
-            pthread_mutex_lock(&game->state_mutex);
-            if (game->game_over && game->active_players >= MIN_PLAYERS) {
-                reset_game_locked();
-                enqueue_log("New game started (round %d)", game->round_no);
-            }
-        }
-        pthread_mutex_unlock(&game->state_mutex);
-    }
-    return NULL;
-}
-
+/* Read a line from socket (newline-terminated). */
 static int recv_line(int sock, char *buf, size_t max_len) {
     size_t idx = 0;
     while (idx < max_len - 1) {
@@ -361,10 +320,13 @@ static int recv_line(int sock, char *buf, size_t max_len) {
     return (int)idx;
 }
 
+/* Best-effort send (small messages). */
 static void send_line(int sock, const char *msg) {
-    send(sock, msg, strlen(msg), 0);
+    ssize_t n = send(sock, msg, strlen(msg), 0);
+    (void)n; /* ignore send errors; disconnect is handled on recv */
 }
 
+/* Print scoreboard to a client. */
 static void send_scoreboard_lines(int sock, ScoreEntry *scores, int count) {
     char line[128];
     send_line(sock, "Scoreboard:\n");
@@ -379,9 +341,10 @@ static void send_scoreboard_lines(int sock, ScoreEntry *scores, int count) {
     }
 }
 
+/* Child process: handle one player session. */
+
 static void handle_client(int sock, int id) {
     char buffer[256];
-    char board_local[2048];
     srand((unsigned int)(time(NULL) ^ (getpid() << 16)));
 
     send_line(sock, "Enter your name (no spaces):\n");
@@ -390,6 +353,7 @@ static void handle_client(int sock, int id) {
         close(sock);
         return;
     }
+    /* Replace spaces to keep name tokens simple in scores.txt. */
     for (int i = 0; buffer[i] != '\0'; i++) {
         if (isspace((unsigned char)buffer[i])) {
             buffer[i] = '_';
@@ -402,15 +366,18 @@ static void handle_client(int sock, int id) {
     pthread_mutex_lock(&game->state_mutex);
     strncpy(game->player_name[id], buffer, MAX_NAME - 1);
     game->player_name[id][MAX_NAME - 1] = '\0';
+    game->ready[id] = 1;
     pthread_mutex_unlock(&game->state_mutex);
 
     snprintf(buffer, sizeof(buffer), "Welcome %s! Waiting for the game to start...\n", game->player_name[id]);
     send_line(sock, buffer);
     send_line(sock, "Rules: first to reach 100 wins (exact roll needed). Snakes down, ladders up.\n");
+
     pthread_mutex_lock(&game->state_mutex);
     int connected_now = game->active_players;
     int target_total = game->target_players;
     pthread_mutex_unlock(&game->state_mutex);
+
     snprintf(buffer, sizeof(buffer), "Players connected: %d/%d\n", connected_now, target_total);
     send_line(sock, buffer);
     send_line(sock, "Waiting for other players to join...\n");
@@ -418,33 +385,14 @@ static void handle_client(int sock, int id) {
 
     int game_started_notice = 0;
     int game_over_notice = 0;
-    int last_board_version = 0;
-    while (server_running) {
-        send_line(sock, "Waiting for your turn...\n");
-        if (sem_wait(&game->turn_sem[id]) != 0) {
-            continue;
-        }
+    int my_turns = 0;
 
+    while (server_running) {
         pthread_mutex_lock(&game->state_mutex);
+
         if (!game->connected[id]) {
             pthread_mutex_unlock(&game->state_mutex);
             break;
-        }
-        if (!game->game_over) {
-            game_over_notice = 0;
-        }
-
-        int send_board_now = 0;
-        if (game->board_version > 0 && game->board_version != last_board_version) {
-            strncpy(board_local, game->board_snapshot, sizeof(board_local) - 1);
-            board_local[sizeof(board_local) - 1] = '\0';
-            last_board_version = game->board_version;
-            game->board_seen_count++;
-            if (game->board_seen_count >= game->board_target_count && game->board_target_count > 0) {
-                game->board_seen_count = 0;
-                game->board_target_count = 0;
-            }
-            send_board_now = 1;
         }
 
         if (game->game_over) {
@@ -466,13 +414,6 @@ static void handle_client(int sock, int id) {
             }
             pthread_mutex_unlock(&game->state_mutex);
 
-            if (send_board_now) {
-                send_line(sock, "\n----- Board Snapshot -----\n");
-                send_line(sock, board_local);
-                send_line(sock, "--------------------------\n");
-                enqueue_log("Board snapshot sent");
-            }
-
             if (!game_over_notice) {
                 send_line(sock, "\n==============================\n");
                 if (winner_name[0]) {
@@ -486,48 +427,50 @@ static void handle_client(int sock, int id) {
                 game_over_notice = 1;
                 game_started_notice = 0;
             }
+            sleep(1);
             continue;
         }
 
         if (!game->game_started) {
             pthread_mutex_unlock(&game->state_mutex);
-            if (send_board_now) {
-                send_line(sock, "\n----- Board Snapshot -----\n");
-                send_line(sock, board_local);
-                send_line(sock, "--------------------------\n");
-                enqueue_log("Board snapshot sent");
-            }
+            sleep(1);
             continue;
         }
 
-        int my_turn = (game->current_turn == id);
+        if (game->current_turn != id) {
+            pthread_mutex_unlock(&game->state_mutex);
+            sleep(1);
+            continue;
+        }
+
         pthread_mutex_unlock(&game->state_mutex);
-
-        if (send_board_now) {
-            send_line(sock, "\n----- Board Snapshot -----\n");
-            send_line(sock, board_local);
-            send_line(sock, "--------------------------\n");
-            enqueue_log("Board snapshot sent");
-        }
-
-        if (!my_turn) {
-            continue;
-        }
 
         if (!game_started_notice) {
             send_line(sock, "Game started! Your turn will be announced.\n");
             game_started_notice = 1;
         }
 
-        send_line(sock, "YOUR_TURN: press ENTER to roll the dice.\n");
+        if (my_turns == 0 || ((my_turns + 1) % 3 == 0)) {
+            char board[2048];
+            build_board_numbers(board, sizeof(board));
+            send_line(sock, "\n----- Board (numbers) -----\n");
+            send_line(sock, board);
+            send_snakes_ladders(sock);
+            send_line(sock, "---------------------------\n");
+        }
+
+        send_line(sock, "YOUR_TURN\n");
+        send_line(sock, "Press ENTER to roll the dice.\n");
+
         n = recv_line(sock, buffer, sizeof(buffer));
         if (n <= 0) {
             pthread_mutex_lock(&game->state_mutex);
             game->connected[id] = 0;
             game->active_players--;
+            game->ready[id] = 0;
             pthread_mutex_unlock(&game->state_mutex);
-            enqueue_log("Player %d (%s) disconnected", id + 1, game->player_name[id]);
-            sem_post(&game->turn_done);
+            enqueue_log("Player %d (%s) disconnected (recv=%d errno=%d)",
+                        id + 1, game->player_name[id], n, errno);
             break;
         }
 
@@ -540,8 +483,6 @@ static void handle_client(int sock, int id) {
         int hit_ladder = 0;
         int jump_from = 0;
         int jump_to = 0;
-        int notify_ids[MAX_PLAYERS];
-        int notify_count = 0; /* who to wake for board snapshot */
 
         if (before + dice <= BOARD_SIZE) {
             moved = 1;
@@ -558,26 +499,6 @@ static void handle_client(int sock, int id) {
                 after = adjusted;
             }
             game->position[id] = after;
-        }
-
-        game->turn_count++;
-        /* every player gets ~3 turns -> show board */
-        int interval = game->active_players * 3;
-        if (interval <= 0) {
-            interval = 3;
-        }
-        if (game->turn_count % interval == 0) {
-            build_board_locked(game->board_snapshot, sizeof(game->board_snapshot));
-            strncpy(board_local, game->board_snapshot, sizeof(board_local) - 1);
-            board_local[sizeof(board_local) - 1] = '\0';
-            game->board_version++;
-            game->board_seen_count = 0;
-            game->board_target_count = game->active_players;
-            for (int i = 0; i < MAX_PLAYERS; i++) {
-                if (game->connected[i] && i != id) {
-                    notify_ids[notify_count++] = i;
-                }
-            }
         }
 
         snprintf(buffer, sizeof(buffer), "Player %s rolled %d -> position %d\n",
@@ -606,20 +527,9 @@ static void handle_client(int sock, int id) {
         build_positions_locked(pos_line, sizeof(pos_line));
         pthread_mutex_unlock(&game->state_mutex);
         if (pos_line[0]) {
-            snprintf(buffer, sizeof(buffer), "Positions: %s\n", pos_line);
-            send_line(sock, buffer);
-        }
-
-        /* manual broadcast: wake everyone so they print the snapshot */
-        if (notify_count > 0) {
-            send_line(sock, "\n----- Board Snapshot -----\n");
-            send_line(sock, board_local);
-            send_line(sock, "--------------------------\n");
-            enqueue_log("Board snapshot sent");
-        }
-
-        for (int i = 0; i < notify_count; i++) {
-            sem_post(&game->turn_sem[notify_ids[i]]);
+            send_line(sock, "Positions: ");
+            send_line(sock, pos_line);
+            send_line(sock, "\n");
         }
 
         pthread_mutex_lock(&game->state_mutex);
@@ -631,24 +541,30 @@ static void handle_client(int sock, int id) {
             snprintf(buffer, sizeof(buffer), "Player %s WON the game\n", game->player_name[id]);
             enqueue_log("Player %s WON the game", game->player_name[id]);
         }
+
+        int next = (id + 1) % game->target_players;
+        while (!game->connected[next]) {
+            next = (next + 1) % game->target_players;
+        }
+        game->current_turn = next;
         pthread_mutex_unlock(&game->state_mutex);
 
         if (buffer[0] != '\0' && strstr(buffer, "WON") != NULL) {
             send_line(sock, buffer);
         }
 
-        sem_post(&game->turn_done);
+        my_turns++;
     }
 
     close(sock);
 }
-
 static void reap(int sig) {
     (void)sig;
     while (waitpid(-1, NULL, WNOHANG) > 0) {
     }
 }
 
+/* Graceful shutdown on Ctrl+C. */
 static void handle_sigint(int sig) {
     (void)sig;
     server_running = 0;
@@ -657,10 +573,6 @@ static void handle_sigint(int sig) {
         server_fd = -1;
     }
     if (game) {
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            sem_post(&game->turn_sem[i]);
-        }
-        sem_post(&game->turn_done);
         sem_post(&game->log_items);
     }
 }
@@ -668,6 +580,7 @@ static void handle_sigint(int sig) {
 int main(void) {
     signal(SIGCHLD, reap);
     signal(SIGINT, handle_sigint);
+    signal(SIGPIPE, SIG_IGN);
 
     int target_players = 0;
     printf("Enter number of players (%d-%d): ", MIN_PLAYERS, MAX_PLAYERS);
@@ -680,7 +593,9 @@ int main(void) {
         printf("Players must be between %d and %d.\n", MIN_PLAYERS, MAX_PLAYERS);
         return 1;
     }
+    printf("Waiting for %d players to connect...\n", target_players);
 
+    /* Shared memory setup (POSIX shm). */
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd < 0) {
         perror("shm_open");
@@ -703,18 +618,16 @@ int main(void) {
     game->winner_id = -1;
     game->round_no = 0;
 
+    /* Process-shared mutexes for shared memory. */
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
     pthread_mutex_init(&game->state_mutex, &attr);
     pthread_mutex_init(&game->log_mutex, &attr);
 
+    /* Process-shared semaphores (pshared = 1). */
     sem_init(&game->log_items, 1, 0);
     sem_init(&game->log_spaces, 1, LOG_QUEUE_SIZE);
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        sem_init(&game->turn_sem[i], 1, 0);
-    }
-    sem_init(&game->turn_done, 1, 0);
 
     FILE *score_fp = fopen(SCORE_FILE, "a");
     if (score_fp) {
@@ -722,9 +635,8 @@ int main(void) {
     }
     load_scores_file();
 
-    pthread_t sched_thread;
+    /* Parent thread: logger only. */
     pthread_t log_thread;
-    pthread_create(&sched_thread, NULL, scheduler_thread, NULL);
     pthread_create(&log_thread, NULL, logger_thread, NULL);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -753,7 +665,9 @@ int main(void) {
 
     printf("Snakes & Ladders Server running on port %d\n", PORT);
     enqueue_log("Server started on port %d", PORT);
+    enqueue_log("Target players: %d", target_players);
 
+    /* Accept exactly N players, then start the game. */
     for (int i = 0; i < target_players; i++) {
         int client_fd = accept(server_fd, NULL, NULL);
         if (client_fd < 0) {
@@ -765,8 +679,13 @@ int main(void) {
         pthread_mutex_lock(&game->state_mutex);
         game->connected[i] = 1;
         game->active_players++;
+        game->ready[i] = 0;
+        int active_now = game->active_players;
         pthread_mutex_unlock(&game->state_mutex);
+        printf("Player %d connected (%d/%d)\n", i + 1, active_now, target_players);
+        enqueue_log("Player %d connected (%d/%d)", i + 1, active_now, target_players);
 
+        /* One child process per client (required by assignment). */
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork");
@@ -787,7 +706,25 @@ int main(void) {
         close(client_fd);
     }
 
+    /* Wait until all players have entered their names. */
+    int name_ready = 0;
+    while (!name_ready) {
+        pthread_mutex_lock(&game->state_mutex);
+        name_ready = 1;
+        for (int i = 0; i < target_players; i++) {
+            if (!game->connected[i] || !game->ready[i]) {
+                name_ready = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&game->state_mutex);
+        if (!name_ready) {
+            sleep(1);
+        }
+    }
+
     pthread_mutex_lock(&game->state_mutex);
+    /* Start first round. */
     reset_game_locked();
     enqueue_log("New game started (round %d)", game->round_no);
     pthread_mutex_unlock(&game->state_mutex);

@@ -1,3 +1,4 @@
+
 CC=gcc
 CFLAGS=-Wall -Wextra -std=c11 -pthread
 LDFLAGS=-lrt
